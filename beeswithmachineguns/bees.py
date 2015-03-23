@@ -76,7 +76,8 @@ def _get_pem_path(key):
     return os.path.expanduser('~/.ssh/%s.pem' % key)
 
 def _get_region(zone):
-    return zone if 'gov' in zone else zone[:-1] # chop off the "d" in the "us-east-1d" to get the "Region"
+    return zone if zone.endswith(tuple([str(i) for i in range(1, 10)])) else zone[:-1]
+    #return zone if 'gov' in zone else zone[:-1] # chop off the "d" in the "us-east-1d" to get the "Region"
 
 def _get_security_group_ids(connection, security_group_names, subnet):
     ids = []
