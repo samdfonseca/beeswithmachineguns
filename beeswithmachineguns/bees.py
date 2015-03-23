@@ -119,6 +119,12 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
     print 'Connecting to the hive.'
 
     ec2_connection = boto.ec2.connect_to_region(_get_region(zone))
+    images = ec2_connection.get_all_images(image_ids=[image_id])
+    try:
+        image = images[0]
+    except IndexError:
+        raise Exception('Unable to find image. ID: {0}'.format(image_id))
+    placement = _get_region(zone)
 
     if bid:
         print 'Attempting to call up %i spot bees, this can take a while...' % count
@@ -138,40 +144,66 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
 
         instances = _wait_for_spot_request_fulfillment(ec2_connection, spot_requests)
     else:
-        print 'Attempting to call up %i bees.' % count
+        print('Attempting to call up %i bees.' % count)
 
-        reservation = ec2_connection.run_instances(
-            image_id=image_id,
-            min_count=count,
-            max_count=count,
-            key_name=key_name,
-            security_groups=[group] if subnet is None else _get_security_group_ids(ec2_connection, [group], subnet),
-            instance_type=instance_type,
-            placement=None if 'gov' in zone else zone,
-            subnet_id=subnet)
+        reservation = image.run(min_count=count,
+                                max_count=count,
+                                security_groups=[group],
+                                key_name=key_name,
+                                instance_type=instance_type,
+                                placement=zone,
+                                subnet_id=subnet)
+
+        #reservation = ec2_connection.run_instances(
+        #    image_id=image_id,
+        #    min_count=count,
+        #    max_count=count,
+        #    key_name=key_name,
+        #    security_groups=[group] if subnet is None else _get_security_group_ids(ec2_connection, [group], subnet),
+        #    instance_type=instance_type,
+        #    placement=None if 'gov' in zone else zone,
+        #    subnet_id=subnet)
 
         instances = reservation.instances
 
     print 'Waiting for bees to load their machine guns...'
 
-    instance_ids = []
+    #instance_ids = []
 
-    for instance in instances:
-        instance.update()
-        while instance.state != 'running':
-            print '.'
-            time.sleep(5)
-            instance.update()
+    #for instance in instances:
+    #    instance.update()
+    #    while instance.state != 'running':
+    #        print('.')
+    #        time.sleep(5)
+    #        instance.update()
 
-        instance_ids.append(instance.id)
+    #    instance_ids.append(instance.id)
 
-        print 'Bee %s is ready for the attack.' % instance.id
+    #    print('Bee %s is ready for the attack.' % instance.id)
+    _wait_for_instances_on_startup(instances)
+    map(lambda instance: instance.add_tag("Name", "a bee!"), instances)
+    instance_ids = [instance.id for instance in instances]
 
-    ec2_connection.create_tags(instance_ids, { "Name": "a bee!" })
+    #ec2_connection.create_tags(instance_ids, { "Name": "a bee!" })
 
     _write_server_list(username, key_name, zone, instances)
 
     print 'The swarm has assembled %i bees.' % len(instances)
+
+def _wait_for_instances_on_startup(instances):
+    running_instances = []
+    waiting_for_instances = instances
+    while waiting_for_instances:
+        # If the instance state is 'running', remove it from the waiting_for_instances and
+        # add it to running_instances. Loop continues until waiting_for_instances is empty.
+        running_instances = []
+        print('.')
+        map(lambda instance: instance.update(), waiting_for_instances)
+        map(lambda instance: running_instances.append(instance),
+                map(lambda instance: waiting_for_instances.pop(waiting_for_instances.index(instance)),
+                    filter(lambda instance: instance.state == 'running', waiting_for_instances)))
+        map(lambda instance: print('Bee {0} is ready for the attack.'.format(instance.id)), running_instances)
+        time.sleep(2)
 
 def report():
     """
