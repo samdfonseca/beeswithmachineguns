@@ -1,3 +1,4 @@
-boto==2.27.0
+boto==2.36.0
 paramiko==1.14.0
-
+apache-libcloud==0.17.0
+Twisted==15.0.0
