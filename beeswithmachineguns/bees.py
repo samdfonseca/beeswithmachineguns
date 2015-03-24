@@ -37,10 +37,16 @@ import csv
 import sys
 import random
 import ssl
+import string
 
 import boto
 import boto.ec2
 import paramiko
+from libcloud.compute.types import Provider
+from libcloud.compute.providers import get_driver
+from libcloud.compute.deployment import MultiStepDeployment
+from libcloud.compute.deployment import ScriptDeployment, SSHKeyDeployment
+from twisted.internet import defer, threads, reactor
 
 STATE_FILENAME = os.path.expanduser('~/.bees')
 
