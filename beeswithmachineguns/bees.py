@@ -52,6 +52,70 @@ STATE_FILENAME = os.path.expanduser('~/.bees')
 
 # Utilities
 
+@defer.inlineCallbacks
+def create_node(name):
+    node = yield threads.deferToThread(_thread_create_node, name=name)
+    reactor.stop()
+
+def _get_provider_credentials(provider, credential_file=None):
+    _credential_files = {
+        'us-west-1': '.ec2',
+        'us-west-2': '.ec2',
+        'us-east-1': '.ec2',
+        'rackspace': '.rackspace',
+        'digitalocean': '.digitalocean'
+    }
+    if credential_file is None:
+        _credential_file = _credential_files.get(provider)
+    else:
+        _credential_file = credential_file
+    with open(os.path.expanduser(_credential_file)) as f:
+        _credential_info = f.readlines()
+    credential_info = map(lambda i: i.split('=')[1], _credential_info)
+    if provider in ['us-west-1', 'us-west-2', 'us-east-1']:
+        credentials = (credential_info['aws_access_key_id'], credential_info['aws_secret_access_key'])
+    elif provider == 'rackspace':
+        credentials = (credential_info['user'], credential_info['api_key'])
+    elif provider == 'digitalocean':
+        credentials = (credential_info['client_id'], credential_info['api_key'])
+    else:
+        return
+    return credentials
+
+def _thread_create_node(provider, **kwargs):
+    _providers = {
+        'us-west-1': (Provider.EC2_US_WEST, 't1.micro', 'ami-5c120b19'),
+        'us-west-2': (Provider.EC2_US_WEST_OREGON, 't1.micro', 'ami-29ebb519'),
+        'us-east-1': (Provider.EC2_US_EAST, 't1.micro', 'ami-5c120b19'),
+        'rackspace': (Provider.RACKSPACE, '2', '8226139f-3804-4ad6-a461-97ee034b2005'),
+        'digitalocean': (Provider.DIGITAL_OCEAN, '512mb', '9801950')
+    }
+    if _providers.get(provider) is None:
+        provider = 'us-east-1'
+    _provider = _providers.get(provider)[0]
+    driver = get_driver(_provider)
+    userandkey = _get_provider_credentials(provider)
+    conn = driver(*userandkey)
+    size_id = kwargs.get('size_id', _providers.get(provider)[1])
+    size = filter(lambda i: i.id == size_id, conn.list_sizes())[0]
+    image_id = kwargs.get('image_id', _providers.get(provider)[2])
+    try:
+        image = conn.get_image(image_id)
+    except NotImplementedError:
+        image = filter(lambda i: i.id == image_id, conn.list_images())[0]
+    name = kwargs.get('name', _generate_random_name())
+    node = conn.deploy_node(name=name, image=image, size=size)
+    return node
+
+def _generate_random_name(dict_file='/usr/share/dict/words'):
+    if os.path.isfile(dict_file):
+        with open(dict_file, 'rt') as f:
+            words = map(lambda i: i.rstrip(), f.readlines())
+            name = '{0}-{1}'.format(words[random.randrange(len(words))], random.randrange(100, 1000))
+    else:
+        name = ''.join([random.choice(string.ascii_letters + string.digits) for n in xrange(20)])
+    return name
+
 def _read_server_list():
     instance_ids = []
 
