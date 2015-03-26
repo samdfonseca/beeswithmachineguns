@@ -63,7 +63,8 @@ def _get_provider_credentials(provider, credential_file=None):
         'us-west-2': '.ec2',
         'us-east-1': '.ec2',
         'rackspace': '.rackspace',
-        'digitalocean': '.digitalocean'
+        'digitalocean': '.digitalocean',
+        'gce': '.googlecloud'
     }
     if credential_file is None:
         _credential_file = _credential_files.get(provider)
@@ -71,13 +72,16 @@ def _get_provider_credentials(provider, credential_file=None):
         _credential_file = credential_file
     with open(os.path.expanduser(_credential_file)) as f:
         _credential_info = f.readlines()
-    credential_info = map(lambda i: i.split('=')[1], _credential_info)
+    credential_info = dict(map(lambda i: i.split('='), _credential_info))
     if provider in ['us-west-1', 'us-west-2', 'us-east-1']:
         credentials = (credential_info['aws_access_key_id'], credential_info['aws_secret_access_key'])
     elif provider == 'rackspace':
         credentials = (credential_info['user'], credential_info['api_key'])
     elif provider == 'digitalocean':
         credentials = (credential_info['client_id'], credential_info['api_key'])
+    elif provider == 'gce':
+        credentials = (credential_info['client_id'], credential_info['client_secret'],
+                       credential_info['project_id'])
     else:
         return
     return credentials
@@ -88,7 +92,8 @@ def _thread_create_node(provider, **kwargs):
         'us-west-2': (Provider.EC2_US_WEST_OREGON, 't1.micro', 'ami-29ebb519'),
         'us-east-1': (Provider.EC2_US_EAST, 't1.micro', 'ami-5c120b19'),
         'rackspace': (Provider.RACKSPACE, '2', '8226139f-3804-4ad6-a461-97ee034b2005'),
-        'digitalocean': (Provider.DIGITAL_OCEAN, '512mb', '9801950')
+        'digitalocean': (Provider.DIGITAL_OCEAN, '512mb', '9801950'),
+        'gce': (Provider.GCE, '', '')
     }
     if _providers.get(provider) is None:
         provider = 'us-east-1'
@@ -120,7 +125,7 @@ def _read_server_list():
     instance_ids = []
 
     if not os.path.isfile(STATE_FILENAME):
-        return (None, None, None, None)
+        return None, None, None, None
 
     with open(STATE_FILENAME, 'r') as f:
         username = f.readline().strip()
@@ -131,14 +136,14 @@ def _read_server_list():
 
         print('Read %i bees from the roster.' % len(instance_ids))
 
-    return (username, key_name, zone, instance_ids)
+    return username, key_name, zone, instance_ids
 
-def _write_server_list(username, key_name, zone, instances):
+def _write_server_list(username, key_name, zone, instance_ids):
     with open(STATE_FILENAME, 'w') as f:
         f.write('%s\n' % username)
         f.write('%s\n' % key_name)
         f.write('%s\n' % zone)
-        f.write('\n'.join([instance.id for instance in instances]))
+        f.write('\n'.join(instance_ids))
 
 def _delete_server_list():
     os.remove(STATE_FILENAME)
@@ -196,7 +201,7 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
         image = images[0]
     except IndexError:
         raise Exception('Unable to find image. ID: {0}'.format(image_id))
-    placement = _get_region(zone)
+    # placement = _get_region(zone)
 
     if bid:
         print('Attempting to call up %i spot bees, this can take a while...' % count)
@@ -253,12 +258,12 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
 
     #    print('Bee %s is ready for the attack.' % instance.id)
     _wait_for_instances_on_startup(instances)
-    map(lambda instance: instance.add_tag("Name", "a bee!"), instances)
+    map(lambda inst: inst.add_tag("Name", "a bee!"), instances)
     instance_ids = [instance.id for instance in instances]
 
     #ec2_connection.create_tags(instance_ids, { "Name": "a bee!" })
 
-    _write_server_list(username, key_name, zone, instances)
+    _write_server_list(username, key_name, zone, instance_ids)
 
     print('The swarm has assembled %i bees.' % len(instances))
 
