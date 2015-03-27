@@ -594,7 +594,7 @@ def attack(url, n, c, **options):
     try:
         response = urllib2.urlopen(request)
     except URLError:
-        from ssl import _create_unverified_context()
+        from ssl import _create_unverified_context
         response = urllib2.urlopen(request, context=_create_unverified_context())
 
     print 'Organizing the swarm.'
