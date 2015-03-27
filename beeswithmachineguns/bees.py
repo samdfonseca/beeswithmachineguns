@@ -35,7 +35,6 @@ import base64
 import csv
 import sys
 import random
-import ssl
 
 import boto
 import boto.ec2
@@ -592,9 +591,11 @@ def attack(url, n, c, **options):
     for key, value in dict_headers.iteritems():
         request.add_header(key, value)
 
-    context = ssl._create_unverified_context()
-    response = urllib2.urlopen(request, context=context)
-    response.read()
+    try:
+        response = urllib2.urlopen(request)
+    except URLError:
+        from ssl import _create_unverified_context()
+        response = urllib2.urlopen(request, context=_create_unverified_context())
 
     print 'Organizing the swarm.'
     # Spin up processes for connecting to EC2 instances
