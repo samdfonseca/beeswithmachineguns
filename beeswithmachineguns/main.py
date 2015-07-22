@@ -27,6 +27,9 @@ THE SOFTWARE.
 import bees
 from urlparse import urlparse
 from optparse import OptionParser, OptionGroup
+import logging
+
+logger = logging.getLogger('main')
 
 def parse_options():
     """
@@ -130,6 +133,8 @@ commands:
         parser.error('Please enter a command.')
 
     command = args[0]
+    logger.debug('Command: {}'.format(command))
+    map(lambda i: logger.debug('Option: {} = {}'.format(i, getattr(options, i))), [opt for opt in dir(options) if not opt.startswith('_') and opt not in ['read_file', 'read_module', 'ensure_value']])
 
     if command == 'up':
         if not options.key:
@@ -169,6 +174,7 @@ commands:
         bees.down()
     elif command == 'report':
         bees.report()
+    logger.debug('Complete\n')
 
 def main():
     parse_options()

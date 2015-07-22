@@ -40,6 +40,9 @@ import ssl
 import boto
 import boto.ec2
 import paramiko
+import logging
+
+logger = logging.getLogger('bees')
 
 STATE_FILENAME = os.path.expanduser('~/.bees')
 
@@ -59,10 +62,19 @@ def _read_server_list():
         instance_ids = [i for i in text.split('\n') if i != '']
 
         print 'Read %i bees from the roster.' % len(instance_ids)
+        logger.debug('Existing Username: {}'.format(username))
+        logger.debug('Existing Keyname: {}'.format(key_name))
+        logger.debug('Existing Zone: {}'.format(zone))
+        map(lambda i: logger.debug('Existing Instance: {}'.format(i)), instance_ids)
 
     return (username, key_name, zone, instance_ids)
 
 def _write_server_list(username, key_name, zone, instances):
+    logger.debug('Writing new state file: {}'.format(STATE_FILENAME))
+    logger.debug('Username: {}'.format(username))
+    logger.debug('Keyname: {}'.format(key_name))
+    logger.debug('Zone: {}'.format(zone))
+    map(lambda i: logger.debug('Instance: {}'.format(i.id)), instances)
     with open(STATE_FILENAME, 'w') as f:
         f.write('%s\n' % username)
         f.write('%s\n' % key_name)
@@ -70,13 +82,18 @@ def _write_server_list(username, key_name, zone, instances):
         f.write('\n'.join([instance.id for instance in instances]))
 
 def _delete_server_list():
+    logger.debug('Deleting state file: {}'.format(STATE_FILENAME))
     os.remove(STATE_FILENAME)
 
 def _get_pem_path(key):
-    return os.path.expanduser('~/.ssh/%s.pem' % key)
+    pem_key_path = os.path.expanduser('~/.ssh/%s.pem' % key)
+    logger.debug('Found pem key: {}'.format(pem_key_path))
+    return pem_key_path
 
 def _get_region(zone):
-    return zone if 'gov' in zone else zone[:-1] # chop off the "d" in the "us-east-1d" to get the "Region"
+    region = zone if 'gov' in zone else zone[:-1] # chop off the "d" in the "us-east-1d" to get the "Region"
+    logger.debug('Getting region: {}'.format(region))
+    return region
 
 def _get_security_group_ids(connection, security_group_names, subnet):
     ids = []
@@ -93,6 +110,7 @@ def _get_security_group_ids(connection, security_group_names, subnet):
                     elif group.vpc_id != None:
                         ids.append(group.id)
 
+        map(lambda i: logger.debug('Got security group: {}'.format(i)), ids)
         return ids
 
 # Methods
@@ -294,11 +312,13 @@ def _attack(params):
 
         params['options'] = options
         benchmark_command = 'ab -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
+        logger.debug(benchmark_command)
         stdin, stdout, stderr = client.exec_command(benchmark_command)
 
         response = {}
 
         ab_results = stdout.read()
+        logger.debug(ab_results)
         ms_per_request_search = re.search('Time\ per\ request:\s+([0-9.]+)\ \[ms\]\ \(mean\)', ab_results)
 
         if not ms_per_request_search:
