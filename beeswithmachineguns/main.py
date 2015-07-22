@@ -82,6 +82,14 @@ commands:
 
     parser.add_option_group(up_group)
 
+    init_group = OptionGroup(parser, 'init',
+                             """To run an init script on each instance, set the -I flag as a path to the local file.""")
+
+    init_group.add_option('-I', '--init_file', metavar='init_file', nargs=1, action='store', dest='init_file',
+                        default='', type='string', help='Init script to run on each instance after launching.')
+
+    parser.add_option_group(init_group)
+
     attack_group = OptionGroup(parser, "attack",
                                """Beginning an attack requires only that you specify the -u option with the URL you wish to target.""")
 
@@ -139,6 +147,11 @@ commands:
             print 'New bees will use the "default" EC2 security group. Please note that port 22 (SSH) is not normally open on this group. You will need to use to the EC2 tools to open it before you will be able to attack.'
 
         bees.up(options.servers, options.group, options.zone, options.instance, options.type, options.login, options.key, options.subnet, options.bid)
+    elif command == 'init':
+        if not options.init_file:
+            parser.error('To initalize the instances you need to specify a init script with -I')
+        bees.init(options.init_file)
+
     elif command == 'attack':
         if not options.url:
             parser.error('To run an attack you need to specify a url with -u')

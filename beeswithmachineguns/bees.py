@@ -36,6 +36,7 @@ import csv
 import sys
 import random
 import ssl
+import hashlib
 
 import boto
 import boto.ec2
@@ -251,6 +252,18 @@ def down():
 
     _delete_server_list()
 
+def init(init_file):
+    username, key_name, zone, instance_ids = _read_server_list()
+    ec2_connection = boto.ec2.connect_to_region(_get_region(zone))
+    reservations = ec2_connection.get_all_instances(instance_ids=instance_ids)
+
+    instances = []
+    for reservation in reservations:
+        instances.extend(reservation.instances)
+
+    _init_instances(instances, username, init_file, '/tmp/', key_name)
+    print('Finished initializing instances.')
+
 def _wait_for_spot_request_fulfillment(conn, requests, fulfilled_requests = []):
     """
     Wait until all spot requests are fulfilled.
@@ -451,7 +464,7 @@ def _create_request_time_cdf_csv(results, complete_bees_params, request_time_cdf
                 row = [i, request_time_cdf[i]] if i < len(request_time_cdf) else [i,float("inf")]
                 for r in results:
                     if r is not None:
-                    	row.append(r['request_time_cdf'][i]["Time in ms"])
+                        row.append(r['request_time_cdf'][i]["Time in ms"])
                 writer.writerow(row)
 
 
@@ -658,3 +671,38 @@ def _redirect_stdout(outfile, func, *args, **kwargs):
         sys.stdout = redir_out
         func(*args, **kwargs)
     sys.stdout = save_out
+
+def _sftp_put_file(ssh_client, localpath, remotepath, verify=True):
+    class SFTPChecksumMismatchException(Exception):
+        pass
+
+    remotepath += localpath
+    sftp = ssh_client.open_sftp()
+    sftp.put(localpath, remotepath)
+    with open(localpath) as f:
+        local_hash = hashlib.md5(f.read()).hexdigest()
+    with sftp.open(remotepath) as f:
+        remote_hash = hashlib.md5(f.read()).hexdigest()
+    if (local_hash != remote_hash) and verify:
+        msg = 'Local Hash: {local}, Remote Hash: {remote}'.format(local=local_hash, remote=remote_hash)
+        raise SFTPChecksumMismatchException(msg)
+
+def _init_instance(args):
+    instance, username, init_file_path, remotepath, key = args
+    print('Initializing instance: {}'.format(instance))
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if key is None:
+        client.load_system_host_keys()
+        client.connect(instance.public_dns_name, username=username)
+    else:
+        pem_key_path = _get_pem_path(key)
+        client.connect(instance.public_dns_name, username=username, key_filename=pem_key_path)
+    _sftp_put_file(client, init_file_path, remotepath)
+    client.exec_command('source {path}/{init_file}'.format(
+        path=remotepath, init_file=os.path.basename(init_file_path)
+    ))
+
+def _init_instances(instances, username, init_file_path, remotepath, key):
+    pool = Pool(len(instances))
+    pool.map(_init_instance, [[instance, username, init_file_path, remotepath, key] for instance in instances])
