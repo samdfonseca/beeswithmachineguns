@@ -107,14 +107,19 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
 
     count = int(count)
     if existing_username == username and existing_key_name == key_name and existing_zone == zone:
+        ec2_connection = boto.ec2.connect_to_region(_get_region(zone))
+        existing_reservations = ec2_connection.get_all_instances(instance_ids=instance_ids)
+        existing_instances = filter(lambda i: i.state == 'running', [r.instances[0] for r in existing_reservations])
         # User, key and zone match existing values and instance ids are found on state file
-        if count <= len(instance_ids):
+        if count <= len(existing_instances):
             # Count is less than the amount of existing instances. No need to create new ones.
             print 'Bees are already assembled and awaiting orders.'
             return
         else:
+            # for instance in existing_instances:
+            #     if instance.state
             # Count is greater than the amount of existing instances. Need to create the only the extra instances.
-            count -= len(instance_ids)
+            count -= len(existing_instances)
     elif instance_ids:
         # Instances found on state file but user, key and/or zone not matching existing value.
         # State file only stores one user/key/zone config combination so instances are unusable.
@@ -183,8 +188,10 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
 
     if instance_ids:
         existing_reservations = ec2_connection.get_all_instances(instance_ids=instance_ids)
-        existing_instances = [r.instances[0] for r in existing_reservations]
+        existing_instances = filter(lambda i: i.state == 'running', [r.instances[0] for r in existing_reservations])
         map(instances.append, existing_instances)
+        dead_instances = filter(lambda i: i not in [j.id for j in existing_instances], instance_ids)
+        map(instance_ids.pop, [instance_ids.index(i) for i in dead_instances])
 
     print 'Waiting for bees to load their machine guns...'
 
@@ -340,7 +347,7 @@ def _attack(params):
             options += ' -A %s' % params['basic_auth']
 
         params['options'] = options
-        benchmark_command = 'ab -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
+        benchmark_command = 'ab -v 3 -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
         stdin, stdout, stderr = client.exec_command(benchmark_command)
 
         response = {}
@@ -367,6 +374,11 @@ def _attack(params):
                 response['failed_requests_exceptions'] = float(re.search('Exceptions:\s+([0-9.]+)', failed_requests_detail.group(0)).group(1))
 
         complete_requests_search = re.search('Complete\ requests:\s+([0-9]+)', ab_results)
+
+        response['number_of_200s'] = len(re.findall('HTTP/1.1\ 2[0-9][0-9]', ab_results))
+        response['number_of_300s'] = len(re.findall('HTTP/1.1\ 3[0-9][0-9]', ab_results))
+        response['number_of_400s'] = len(re.findall('HTTP/1.1\ 4[0-9][0-9]', ab_results))
+        response['number_of_500s'] = len(re.findall('HTTP/1.1\ 5[0-9][0-9]', ab_results))
 
         response['ms_per_request'] = float(ms_per_request_search.group(1))
         response['requests_per_second'] = float(requests_per_second_search.group(1))
@@ -420,6 +432,18 @@ def _summarize_results(results, params, csv_filename):
 
     complete_results = [r['failed_requests_exceptions'] for r in summarized_results['complete_bees']]
     summarized_results['total_failed_requests_exceptions'] = sum(complete_results)
+
+    complete_results = [r['number_of_200s'] for r in summarized_results['complete_bees']]
+    summarized_results['total_number_of_200s'] = sum(complete_results)
+
+    complete_results = [r['number_of_300s'] for r in summarized_results['complete_bees']]
+    summarized_results['total_number_of_300s'] = sum(complete_results)
+
+    complete_results = [r['number_of_400s'] for r in summarized_results['complete_bees']]
+    summarized_results['total_number_of_400s'] = sum(complete_results)
+
+    complete_results = [r['number_of_500s'] for r in summarized_results['complete_bees']]
+    summarized_results['total_number_of_500s'] = sum(complete_results)
 
     complete_results = [r['requests_per_second'] for r in summarized_results['complete_bees']]
     summarized_results['mean_requests'] = sum(complete_results)
@@ -510,6 +534,11 @@ def _print_results(summarized_results):
     print '          receive:\t\t%i' % summarized_results['total_failed_requests_receive']
     print '          length:\t\t%i' % summarized_results['total_failed_requests_length']
     print '          exceptions:\t\t%i' % summarized_results['total_failed_requests_exceptions']
+    print '     Response Codes:'
+    print '          2xx:\t\t%i' % summarized_results['total_number_of_200s']
+    print '          3xx:\t\t%i' % summarized_results['total_number_of_300s']
+    print '          4xx:\t\t%i' % summarized_results['total_number_of_400s']
+    print '          5xx:\t\t%i' % summarized_results['total_number_of_500s']
     print '     Requests per second:\t%f [#/sec] (mean of bees)' % summarized_results['mean_requests']
     if 'rps_bounds' in summarized_results and summarized_results['rps_bounds'] is not None:
         print '     Requests per second:\t%f [#/sec] (upper bounds)' % summarized_results['rps_bounds']
