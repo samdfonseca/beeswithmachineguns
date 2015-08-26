@@ -41,6 +41,8 @@ import hashlib
 import boto
 import boto.ec2
 import paramiko
+from fabric.api import run, env, get, execute
+from fabric.decorators import hosts
 
 STATE_FILENAME = os.path.expanduser('~/.bees')
 
@@ -98,6 +100,13 @@ def _get_security_group_ids(connection, security_group_names, subnet):
 
 # Methods
 
+def _get_running_bees(connection, instance_ids):
+    reservations = connection.get_all_instances(instance_ids=instance_ids, filters={"tag:Name" : "a bee!"})
+    existing_instances = []
+    map(existing_instances.extend, [r.instances for r in reservations])
+    running_instances = filter(lambda i: i.state == 'running', existing_instances)
+    return running_instances
+
 def up(count, group, zone, image_id, instance_type, username, key_name, subnet, bid = None):
     """
     Startup the load testing server.
@@ -108,10 +117,9 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
     count = int(count)
     if existing_username == username and existing_key_name == key_name and existing_zone == zone:
         ec2_connection = boto.ec2.connect_to_region(_get_region(zone))
-        existing_reservations = ec2_connection.get_all_instances(instance_ids=instance_ids)
-        existing_instances = filter(lambda i: i.state == 'running', [r.instances[0] for r in existing_reservations])
+        running_instances = _get_running_bees(ec2_connection, instance_ids)
         # User, key and zone match existing values and instance ids are found on state file
-        if count <= len(existing_instances):
+        if count <= len(running_instances):
             # Count is less than the amount of existing instances. No need to create new ones.
             print 'Bees are already assembled and awaiting orders.'
             return
@@ -119,7 +127,7 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
             # for instance in existing_instances:
             #     if instance.state
             # Count is greater than the amount of existing instances. Need to create the only the extra instances.
-            count -= len(existing_instances)
+            count -= len(running_instances)
     elif instance_ids:
         # Instances found on state file but user, key and/or zone not matching existing value.
         # State file only stores one user/key/zone config combination so instances are unusable.
@@ -187,8 +195,9 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
         instances = reservation.instances
 
     if instance_ids:
-        existing_reservations = ec2_connection.get_all_instances(instance_ids=instance_ids)
-        existing_instances = filter(lambda i: i.state == 'running', [r.instances[0] for r in existing_reservations])
+        # existing_reservations = ec2_connection.get_all_instances(instance_ids=instance_ids, filters={"tag:Name" : "a bee!"})
+        # existing_instances = filter(lambda i: i.state == 'running', [r.instances[0] for r in existing_reservations])
+        existing_instances = _get_running_bees(ec2_connection, instance_ids)
         map(instances.append, existing_instances)
         dead_instances = filter(lambda i: i not in [j.id for j in existing_instances], instance_ids)
         map(instance_ids.pop, [instance_ids.index(i) for i in dead_instances])
@@ -197,7 +206,7 @@ def up(count, group, zone, image_id, instance_type, username, key_name, subnet, 
 
     instance_ids = instance_ids or []
 
-    for instance in filter(lambda i: i.state == 'pending', instances):
+    for instance in filter(lambda i: i.state != 'terminated', instances):
         instance.update()
         while instance.state != 'running':
             print '.'
@@ -259,7 +268,7 @@ def down():
 
     _delete_server_list()
 
-def init(init_file):
+def init(init_file, attack_file, verbose):
     username, key_name, zone, instance_ids = _read_server_list()
     ec2_connection = boto.ec2.connect_to_region(_get_region(zone))
     reservations = ec2_connection.get_all_instances(instance_ids=instance_ids)
@@ -268,7 +277,7 @@ def init(init_file):
     for reservation in reservations:
         instances.extend(reservation.instances)
 
-    _init_instances(instances, username, init_file, '/tmp/', key_name)
+    _init_instances(instances, username, init_file, attack_file, '/tmp/', key_name)
     print('Finished initializing instances.')
 
 def _wait_for_spot_request_fulfillment(conn, requests, fulfilled_requests = []):
@@ -698,8 +707,9 @@ def _redirect_stdout(outfile, func, *args, **kwargs):
     save_out = sys.stdout
     with open(outfile, 'w') as redir_out:
         sys.stdout = redir_out
-        func(*args, **kwargs)
+        results = func(*args, **kwargs)
     sys.stdout = save_out
+    return results
 
 def _sftp_put_file(ssh_client, localpath, remotepath, verify=True):
     class SFTPChecksumMismatchException(Exception):
@@ -717,7 +727,7 @@ def _sftp_put_file(ssh_client, localpath, remotepath, verify=True):
         raise SFTPChecksumMismatchException(msg)
 
 def _init_instance(args):
-    instance, username, init_file_path, remotepath, key = args
+    instance, username, init_file_path, attack_file_path, remotepath, key = args
     print('Initializing instance: {}'.format(instance))
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -728,10 +738,22 @@ def _init_instance(args):
         pem_key_path = _get_pem_path(key)
         client.connect(instance.public_dns_name, username=username, key_filename=pem_key_path)
     _sftp_put_file(client, init_file_path, remotepath)
-    client.exec_command('source {path}/{init_file}'.format(
-        path=remotepath, init_file=os.path.basename(init_file_path)
-    ))
+    if attack_file_path:
+        _sftp_put_file(client, attack_file_path, remotepath)
+    # client.exec_command('chmod +x {path}/{init_file}'.format(path=remotepath, init_file=os.path.basename(init_file_path)))
+    # client.exec_command('{path}/{init_file}'.format(
+    #     path=remotepath, init_file=os.path.basename(init_file_path)
+    # ))
 
-def _init_instances(instances, username, init_file_path, remotepath, key):
+def _init_instances(instances, username, init_file_path, attack_file_path, remote_path, key_name, verbose):
+    hosts = [instance.ip_address for instance in instances]
+    env.user = username
+    env.key_filename = _get_pem_path(key_name)
+    env.parallel = True
     pool = Pool(len(instances))
-    pool.map(_init_instance, [[instance, username, init_file_path, remotepath, key] for instance in instances])
+    pool.map(_init_instance, [[instance, username, init_file_path, attack_file_path, remote_path, key_name] for instance in instances])
+    run_init_file = lambda: run('chmod +x {path}/{init_file}; {path}/{init_file}'.format(path=remote_path, init_file=os.path.basename(init_file_path)))
+    if verbose:
+        execute(run_init_file, hosts=hosts)
+    else:
+        _redirect_stdout('/dev/null', execute, run_init_file, hosts=hosts)

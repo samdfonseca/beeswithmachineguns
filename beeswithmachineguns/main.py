@@ -88,6 +88,12 @@ commands:
     init_group.add_option('-I', '--init_file', metavar='init_file', nargs=1, action='store', dest='init_file',
                         default='', type='string', help='Init script to run on each instance after launching.')
 
+    init_group.add_option('-a', '--attack_file', metavar='attack_file', nargs=1, action='store', dest='attack_file',
+                          default='', type='string', help='Init script to run on each instance after launching.')
+
+    init_group.add_option('-V', '--verbose', metavar='verbose', action='store_true', dest='verbose',
+                          help='Print output from init script after executing.')
+
     parser.add_option_group(init_group)
 
     attack_group = OptionGroup(parser, "attack",
@@ -150,7 +156,9 @@ commands:
     elif command == 'init':
         if not options.init_file:
             parser.error('To initalize the instances you need to specify a init script with -I')
-        bees.init(options.init_file)
+        # if not options.attack_file:
+        #     parser.error('To initalize the instances you need to specify a attack script with -A')
+        bees.init(options.init_file, options.attack_file, options.verbose)
 
     elif command == 'attack':
         if not options.url:
