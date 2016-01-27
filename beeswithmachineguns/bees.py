@@ -56,8 +56,10 @@ STATE_FILENAME = os.path.expanduser('~/.bees')
 def _redirect_stdout(outfile=None):
     save_stdout = sys.stdout
     sys.stdout = outfile or StringIO()
-    yield
-    sys.stdout = save_stdout
+    try:
+        yield
+    finally:
+        sys.stdout = save_stdout
 
 def _read_server_list():
     instance_ids = []
